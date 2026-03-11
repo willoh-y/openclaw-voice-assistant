@@ -1,0 +1,30 @@
+audio:
+  sample_rate: 16000
+  channels: 1
+  mic_device: "alsa_input.usb-Fractal_Fractal_Scape_Dongle_00000000911AD4AV2847-00.mono-fallback"
+  gate_threshold: 200
+
+stt:
+  model: "nova-3"
+  language: "en"
+  endpointing_ms: 1500
+  max_session_seconds: 300
+
+tts:
+  provider: "elevenlabs"  # or "edge"
+  elevenlabs:
+    voice_id: "lLgB6ZeIe84FSJa9pO1a"
+    model: "eleven_flash_v2_5"
+    stability: 0.7
+    similarity_boost: 0.75
+  edge:
+    voice: "en-US-ChristopherNeural"
+
+llm:
+  url: "http://127.0.0.1:18789"
+  session_id: "agent:main:main"
+  timeout_seconds: 120
+
+interrupt:
+  delay_seconds: 0.5
+  sustained_threshold_seconds: 0.3
