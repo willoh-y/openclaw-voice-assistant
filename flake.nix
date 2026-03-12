@@ -205,8 +205,9 @@
                 RestartSec = "5s";
 
                 # Allow SIGUSR1 for toggling active/dormant state
-                # Users can run: systemctl --user kill -s SIGUSR1 open-claw-voice
-                KillMode = "mixed";
+                # Users can run: systemctl --user kill --kill-whom=main -s SIGUSR1 open-claw-voice
+                # Using KillMode=process so signals only go to main process by default
+                KillMode = "process";
                 KillSignal = "SIGTERM";
               } // lib.optionalAttrs (cfg.environmentFile != null) {
                 EnvironmentFile = cfg.environmentFile;
