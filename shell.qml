@@ -68,9 +68,22 @@ PanelWindow {
     property var currentConfig: stateConfig[state] || stateConfig["dormant"]
 
     // Read state file
+    // In dev mode: ./state.txt (relative to script)
+    // In production: $XDG_RUNTIME_DIR/open-claw-voice/state.txt
+    property string stateFilePath: {
+        var envPath = Quickshell.env("OPEN_CLAW_VOICE_STATE_FILE")
+        if (envPath) return envPath
+        
+        var runtimeDir = Quickshell.env("XDG_RUNTIME_DIR")
+        if (runtimeDir) return runtimeDir + "/open-claw-voice/state.txt"
+        
+        // Fallback to relative path for dev mode
+        return Qt.resolvedUrl("./state.txt")
+    }
+
     FileView {
         id: stateFile
-        path: Qt.resolvedUrl("./state.txt")
+        path: window.stateFilePath
         watchChanges: true
         
         onFileChanged: this.reload()
