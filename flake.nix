@@ -208,6 +208,8 @@
                 # Users can run: systemctl --user kill -s SIGUSR1 open-claw-voice
                 KillMode = "mixed";
                 KillSignal = "SIGTERM";
+              } // lib.optionalAttrs (cfg.environmentFile != null) {
+                EnvironmentFile = cfg.environmentFile;
               };
 
               # Environment file for API keys (if specified)
@@ -215,8 +217,6 @@
                 # Ensure XDG directories are available
                 XDG_RUNTIME_DIR = "/run/user/%U";
               };
-            } // lib.optionalAttrs (cfg.environmentFile != null) {
-              serviceConfig.EnvironmentFile = cfg.environmentFile;
             };
           };
         };
