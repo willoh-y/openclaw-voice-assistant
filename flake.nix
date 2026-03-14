@@ -82,6 +82,7 @@
                   edge-tts
                   pyyaml
                   webrtcvad
+                  setuptools
                 ]
               )
             }/bin/python $out/bin/open-claw-voice \
