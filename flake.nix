@@ -214,7 +214,7 @@
             environment.systemPackages = [ cfg.package ];
 
             # Create systemd user service
-            systemd.user.services.open-claw-voice = {
+            systemd.user.services.openclaw-voice-assistant = {
               description = "OpenClaw Voice Assistant - Voice chat with OpenClaw";
               wantedBy = [ "default.target" ];
               after = [
