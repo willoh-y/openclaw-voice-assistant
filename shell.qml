@@ -1,6 +1,7 @@
 import Quickshell
 import Quickshell.Io
 import QtQuick
+import QtQuick.Effects
 
 PanelWindow {
     id: window
@@ -21,51 +22,84 @@ PanelWindow {
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
 
+    // Background with shadow
+    Rectangle {
+        id: background
+        anchors.centerIn: parent
+        width: 50
+        height: 50
+        radius: 0
+        color: "#dcdad5"
+
+        layer.enabled: true
+        layer.effect: MultiEffect {
+            shadowEnabled: true
+            shadowColor: "#80000000"
+            shadowHorizontalOffset: 2
+            shadowVerticalOffset: 2
+            shadowBlur: 0.5
+        }
+    }
+
     // State from openclaw_voice_assistant.py
     property string state: "dormant"
 
     // Window is invisible when dormant
     visible: state !== "dormant"
     
-    // Animation frame counter
-    property int frame: 0
-
     // State-based configuration
     property var stateConfig: ({
         "dormant": {
-            "chars": [""],
+            "char": "",
             "color": "transparent",
-            "interval": 1000
+            "minOpacity": 1.0,
+            "maxOpacity": 1.0,
+            "pulseDuration": 1000
         },
         "idle": {
-            "chars": [".", "o", "O", "o"],
+            "char": "󰒲",
             "color": "#888888",
-            "interval": 500
+            "minOpacity": 0.5,
+            "maxOpacity": 1.0,
+            "pulseDuration": 2000
         },
         "listening": {
-            "chars": ["|", "/", "-", "\\"],
+            "char": "󰟅",
             "color": "#4fc3f7",
-            "interval": 80
+            "minOpacity": 0.7,
+            "maxOpacity": 1.0,
+            "pulseDuration": 800
         },
         "thinking": {
-            "chars": [".", "..", "..."],
-            "color": "#ffd54f",
-            "interval": 300
+            "char": "󰧑",
+            "color": "#ff9800",
+            "minOpacity": 0.5,
+            "maxOpacity": 1.0,
+            "pulseDuration": 1200
         },
         "speaking": {
-            "chars": ["((", "()", "))"],
+            "char": "󰗋",
             "color": "#81c784",
-            "interval": 150
+            "minOpacity": 0.7,
+            "maxOpacity": 1.0,
+            "pulseDuration": 500
         },
         "error": {
-            "chars": ["!", "!", " ", " "],
+            "char": "x",
             "color": "#ef5350",
-            "interval": 200
+            "minOpacity": 0.5,
+            "maxOpacity": 1.0,
+            "pulseDuration": 600
         }
     })
 
     // Current config based on state
     property var currentConfig: stateConfig[state] || stateConfig["dormant"]
+
+    // Restart pulse animation when state changes
+    onStateChanged: {
+        pulseAnimation.restart()
+    }
 
     // Read state file
     // In dev mode: ./state.txt (relative to script)
@@ -108,22 +142,32 @@ PanelWindow {
     }
 
     Text {
-        anchors.centerIn: parent
-        text: {
-            var chars = currentConfig.chars
-            return chars[frame % chars.length]
-        }
+        id: stateIcon
+        anchors.centerIn: background
+        text: currentConfig.char
         color: currentConfig.color
         font.pixelSize: 32
-        font.family: "monospace"
+        font.family: "GohuFont 14 Nerd Font Mono"
         font.bold: true
-    }
 
-    Timer {
-        id: animTimer
-        interval: currentConfig.interval
-        running: true
-        repeat: true
-        onTriggered: window.frame++
+        // Opacity pulse animation
+        SequentialAnimation on opacity {
+            id: pulseAnimation
+            loops: Animation.Infinite
+            running: window.state !== "dormant"
+
+            NumberAnimation {
+                from: window.currentConfig.maxOpacity
+                to: window.currentConfig.minOpacity
+                duration: window.currentConfig.pulseDuration / 2
+                easing.type: Easing.InOutSine
+            }
+            NumberAnimation {
+                from: window.currentConfig.minOpacity
+                to: window.currentConfig.maxOpacity
+                duration: window.currentConfig.pulseDuration / 2
+                easing.type: Easing.InOutSine
+            }
+        }
     }
 }
