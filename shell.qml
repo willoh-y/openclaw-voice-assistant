@@ -16,37 +16,18 @@ PanelWindow {
         right: 20
     }
 
-    implicitWidth: 60
-    implicitHeight: 60
+    implicitWidth: 100
+    implicitHeight: 100
 
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
-
-    // Background with shadow
-    Rectangle {
-        id: background
-        anchors.centerIn: parent
-        width: 50
-        height: 50
-        radius: 0
-        color: "#dcdad5"
-
-        layer.enabled: true
-        layer.effect: MultiEffect {
-            shadowEnabled: true
-            shadowColor: "#80000000"
-            shadowHorizontalOffset: 2
-            shadowVerticalOffset: 2
-            shadowBlur: 0.5
-        }
-    }
 
     // State from openclaw_voice_assistant.py
     property string state: "dormant"
 
     // Window is invisible when dormant
     visible: state !== "dormant"
-    
+
     // State-based configuration
     property var stateConfig: ({
         "dormant": {
@@ -107,10 +88,10 @@ PanelWindow {
     property string stateFilePath: {
         var envPath = Quickshell.env("OPENCLAW_VOICE_ASSISTANT_STATE_FILE")
         if (envPath) return envPath
-        
+
         var runtimeDir = Quickshell.env("XDG_RUNTIME_DIR")
         if (runtimeDir) return runtimeDir + "/openclaw-voice-assistant/state.txt"
-        
+
         // Fallback to relative path for dev mode
         return Qt.resolvedUrl("./state.txt")
     }
@@ -119,7 +100,7 @@ PanelWindow {
         id: stateFile
         path: window.stateFilePath
         watchChanges: true
-        
+
         onFileChanged: this.reload()
         onLoaded: {
             var content = this.text().trim()
@@ -141,32 +122,61 @@ PanelWindow {
         }
     }
 
-    Text {
-        id: stateIcon
-        anchors.centerIn: background
-        text: currentConfig.char
-        color: currentConfig.color
-        font.pixelSize: 32
-        font.family: "GohuFont 14 Nerd Font Mono"
-        font.bold: true
+    // Outer border with shadow
+    Rectangle {
+        id: outerBorder
+        anchors.centerIn: parent
+        width: 74
+        height: 74
+        radius: 0
+        color: "#888888"
 
-        // Opacity pulse animation
-        SequentialAnimation on opacity {
-            id: pulseAnimation
-            loops: Animation.Infinite
-            running: window.state !== "dormant"
+        layer.enabled: true
+        layer.effect: MultiEffect {
+            shadowEnabled: true
+            shadowColor: "#80000000"
+            shadowHorizontalOffset: 2
+            shadowVerticalOffset: 2
+            shadowBlur: 0.5
+        }
 
-            NumberAnimation {
-                from: window.currentConfig.maxOpacity
-                to: window.currentConfig.minOpacity
-                duration: window.currentConfig.pulseDuration / 2
-                easing.type: Easing.InOutSine
-            }
-            NumberAnimation {
-                from: window.currentConfig.minOpacity
-                to: window.currentConfig.maxOpacity
-                duration: window.currentConfig.pulseDuration / 2
-                easing.type: Easing.InOutSine
+        // Inner background
+        Rectangle {
+            id: background
+            anchors.centerIn: parent
+            width: 70
+            height: 70
+            radius: 0
+            color: "#dcdad5"
+
+            Text {
+                id: stateIcon
+                anchors.centerIn: parent
+                text: currentConfig.char
+                color: currentConfig.color
+                font.pixelSize: 32
+                font.family: "GohuFont 14 Nerd Font Mono"
+                font.bold: true
+
+                // Opacity pulse animation
+                SequentialAnimation on opacity {
+                    id: pulseAnimation
+                    loops: Animation.Infinite
+                    running: window.state !== "dormant"
+
+                    NumberAnimation {
+                        from: window.currentConfig.maxOpacity
+                        to: window.currentConfig.minOpacity
+                        duration: window.currentConfig.pulseDuration / 2
+                        easing.type: Easing.InOutSine
+                    }
+                    NumberAnimation {
+                        from: window.currentConfig.minOpacity
+                        to: window.currentConfig.maxOpacity
+                        duration: window.currentConfig.pulseDuration / 2
+                        easing.type: Easing.InOutSine
+                    }
+                }
             }
         }
     }
