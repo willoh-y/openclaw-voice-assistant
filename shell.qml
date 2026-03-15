@@ -149,33 +149,47 @@ PanelWindow {
             radius: 0
             color: "#dcdad5"
 
-            Text {
-                id: stateIcon
+            Column {
                 anchors.centerIn: parent
-                text: currentConfig.char
-                color: currentConfig.color
-                font.pixelSize: 32
-                font.family: "GohuFont 14 Nerd Font Mono"
-                font.bold: true
+                spacing: 4
 
-                // Opacity pulse animation
-                SequentialAnimation on opacity {
-                    id: pulseAnimation
-                    loops: Animation.Infinite
-                    running: window.state !== "dormant"
+                Text {
+                    id: stateIcon
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: currentConfig.char
+                    color: currentConfig.color
+                    font.pixelSize: 32
+                    font.family: "GohuFont 14 Nerd Font Mono"
+                    font.bold: true
 
-                    NumberAnimation {
-                        from: window.currentConfig.maxOpacity
-                        to: window.currentConfig.minOpacity
-                        duration: window.currentConfig.pulseDuration / 2
-                        easing.type: Easing.InOutSine
+                    // Opacity pulse animation
+                    SequentialAnimation on opacity {
+                        id: pulseAnimation
+                        loops: Animation.Infinite
+                        running: window.state !== "dormant"
+
+                        NumberAnimation {
+                            from: window.currentConfig.maxOpacity
+                            to: window.currentConfig.minOpacity
+                            duration: window.currentConfig.pulseDuration / 2
+                            easing.type: Easing.InOutSine
+                        }
+                        NumberAnimation {
+                            from: window.currentConfig.minOpacity
+                            to: window.currentConfig.maxOpacity
+                            duration: window.currentConfig.pulseDuration / 2
+                            easing.type: Easing.InOutSine
+                        }
                     }
-                    NumberAnimation {
-                        from: window.currentConfig.minOpacity
-                        to: window.currentConfig.maxOpacity
-                        duration: window.currentConfig.pulseDuration / 2
-                        easing.type: Easing.InOutSine
-                    }
+                }
+
+                // State label
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: window.state
+                    color: currentConfig.color
+                    font.pixelSize: 10
+                    font.family: "GohuFont 14 Nerd Font Mono"
                 }
             }
         }
