@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OpenClaw Voice - Voice chat with OpenClaw
+OpenClaw Voice Assistant - Voice chat with OpenClaw
 
 Flow:
 1. Start in dormant mode (not listening)
@@ -40,10 +40,10 @@ OPENCLAW_TOKEN: Optional[str] = None
 def is_development_mode() -> bool:
     """Check if running in development mode (local directory)."""
     # Explicit dev mode flag
-    if os.getenv("OPEN_CLAW_VOICE_DEV"):
+    if os.getenv("OPENCLAW_VOICE_ASSISTANT_DEV"):
         return True
     # If QML path is set, we're in packaged mode
-    if os.getenv("OPEN_CLAW_VOICE_QML_PATH"):
+    if os.getenv("OPENCLAW_VOICE_ASSISTANT_QML_PATH"):
         return False
     # Default to dev mode (running script directly)
     return True
@@ -56,7 +56,7 @@ def get_state_file() -> Path:
 
     # Production: use XDG runtime directory
     runtime_dir = os.getenv("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
-    state_dir = Path(runtime_dir) / "open-claw-voice"
+    state_dir = Path(runtime_dir) / "openclaw-voice-assistant"
     state_dir.mkdir(parents=True, exist_ok=True)
     return state_dir / "state.txt"
 
@@ -64,19 +64,19 @@ def get_state_file() -> Path:
 def get_log_file() -> Path:
     """Get log file path (persistent state)."""
     if is_development_mode():
-        return Path(__file__).parent / "open_claw_voice.log"
+        return Path(__file__).parent / "openclaw_voice_assistant.log"
 
     # Production: use XDG state directory
     state_home = os.getenv("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))
-    log_dir = Path(state_home) / "open-claw-voice"
+    log_dir = Path(state_home) / "openclaw-voice-assistant"
     log_dir.mkdir(parents=True, exist_ok=True)
-    return log_dir / "open_claw_voice.log"
+    return log_dir / "openclaw_voice_assistant.log"
 
 
 def get_qml_file() -> Path:
     """Get QML UI file path."""
     # Explicit environment variable (set by Nix wrapper)
-    if qml_path := os.getenv("OPEN_CLAW_VOICE_QML_PATH"):
+    if qml_path := os.getenv("OPENCLAW_VOICE_ASSISTANT_QML_PATH"):
         return Path(qml_path)
 
     # Development: use script directory
@@ -89,8 +89,8 @@ def load_environment(env_file: Optional[Path] = None) -> None:
 
     Priority order:
     1. Explicit env_file path (if provided via --env-file)
-    2. XDG config directory: $XDG_CONFIG_HOME/open-claw-voice/.env
-    3. Home config directory: ~/.config/open-claw-voice/.env
+    2. XDG config directory: $XDG_CONFIG_HOME/openclaw-voice-assistant/.env
+    3. Home config directory: ~/.config/openclaw-voice-assistant/.env
     4. Current directory: ./.env (for development)
 
     If no .env file is found, environment variables must be set externally
@@ -105,10 +105,10 @@ def load_environment(env_file: Optional[Path] = None) -> None:
 
     # Try XDG config directory
     xdg_config = os.getenv("XDG_CONFIG_HOME", str(Path.home() / ".config"))
-    xdg_env = Path(xdg_config) / "open-claw-voice" / ".env"
+    xdg_env = Path(xdg_config) / "openclaw-voice-assistant" / ".env"
 
     # Try standard config directory (in case XDG_CONFIG_HOME is set to something else)
-    home_env = Path.home() / ".config" / "open-claw-voice" / ".env"
+    home_env = Path.home() / ".config" / "openclaw-voice-assistant" / ".env"
 
     # Try script directory (development)
     script_env = Path(__file__).parent / ".env"
@@ -892,7 +892,7 @@ class OpenClawVoice:
         """Main loop."""
         self.running = True
         cfg = self.config
-        logger.info("OpenClaw Voice starting...")
+        logger.info("OpenClaw Voice Assistant starting...")
         logger.info(f"Config: mic_device={cfg.audio.mic_device}")
         logger.info(
             "Config: stt_provider="
@@ -935,7 +935,7 @@ class OpenClawVoice:
                     await self.set_state(State.ERROR)
                     await asyncio.sleep(2)
         except asyncio.CancelledError:
-            logger.info("OpenClaw Voice shutting down...")
+            logger.info("OpenClaw Voice Assistant shutting down...")
         finally:
             await self.set_state(State.DORMANT)
             await self.cleanup()

@@ -28,8 +28,8 @@
         ];
 
         # Build the main application package
-        open-claw-voice = pkgs.stdenv.mkDerivation {
-          pname = "open-claw-voice";
+        openclaw-voice-assistant = pkgs.stdenv.mkDerivation {
+          pname = "openclaw-voice-assistant";
           version = "0.1.0";
 
           src = ./.;
@@ -58,17 +58,17 @@
             runHook preInstall
 
             # Install Python modules
-            mkdir -p $out/lib/open-claw-voice
-            cp open_claw_voice.py $out/lib/open-claw-voice/
-            cp config.py $out/lib/open-claw-voice/
+            mkdir -p $out/lib/openclaw-voice-assistant
+            cp openclaw_voice_assistant.py $out/lib/openclaw-voice-assistant/
+            cp config.py $out/lib/openclaw-voice-assistant/
 
             # Install QML UI file
-            mkdir -p $out/share/open-claw-voice
-            cp shell.qml $out/share/open-claw-voice/
+            mkdir -p $out/share/openclaw-voice-assistant
+            cp shell.qml $out/share/openclaw-voice-assistant/
 
             # Install example config and env files
-            cp config.yaml $out/share/open-claw-voice/config.yaml.example
-            cp .env.example $out/share/open-claw-voice/
+            cp config.yaml $out/share/openclaw-voice-assistant/config.yaml.example
+            cp .env.example $out/share/openclaw-voice-assistant/
 
             # Create wrapper script
             mkdir -p $out/bin
@@ -85,10 +85,10 @@
                   setuptools
                 ]
               )
-            }/bin/python $out/bin/open-claw-voice \
-              --add-flags "$out/lib/open-claw-voice/open_claw_voice.py" \
+            }/bin/python $out/bin/openclaw-voice-assistant \
+              --add-flags "$out/lib/openclaw-voice-assistant/openclaw_voice_assistant.py" \
               --prefix PATH : ${pkgs.lib.makeBinPath runtimeDeps} \
-              --set OPEN_CLAW_VOICE_QML_PATH "$out/share/open-claw-voice/shell.qml"
+              --set OPENCLAW_VOICE_ASSISTANT_QML_PATH "$out/share/openclaw-voice-assistant/shell.qml"
 
             runHook postInstall
           '';
@@ -97,7 +97,7 @@
             description = "Voice chat interface for OpenClaw";
             license = licenses.mit;
             platforms = platforms.linux;
-            mainProgram = "open-claw-voice";
+            mainProgram = "openclaw-voice-assistant";
           };
         };
 
@@ -105,8 +105,8 @@
       {
         # Main package
         packages = {
-          default = open-claw-voice;
-          open-claw-voice = open-claw-voice;
+          default = openclaw-voice-assistant;
+          openclaw-voice-assistant = openclaw-voice-assistant;
         };
 
         # Development shell
@@ -127,23 +127,23 @@
           ];
 
           shellHook = ''
-            echo "OpenClaw Voice development environment"
+            echo "OpenClaw Voice Assistant development environment"
             echo ""
-            echo "Run: ./open_claw_voice.py --help"
+            echo "Run: ./openclaw_voice_assistant.py --help"
             echo ""
             echo "First time setup:"
             echo "  1. Copy .env.example to .env and fill in your API keys"
             echo "  2. Edit config.yaml to customize settings"
             echo ""
             echo "Or for production setup:"
-            echo "  mkdir -p ~/.config/open-claw-voice"
-            echo "  cp .env.example ~/.config/open-claw-voice/.env"
-            echo "  cp config.yaml ~/.config/open-claw-voice/config.yaml"
+            echo "  mkdir -p ~/.config/openclaw-voice-assistant"
+            echo "  cp .env.example ~/.config/openclaw-voice-assistant/.env"
+            echo "  cp config.yaml ~/.config/openclaw-voice-assistant/config.yaml"
             echo "  # Edit the files with your settings"
             echo ""
 
             # Set dev mode so local files are used
-            export OPEN_CLAW_VOICE_DEV=1
+            export OPENCLAW_VOICE_ASSISTANT_DEV=1
           '';
         };
       }
@@ -159,19 +159,19 @@
         }:
         with lib;
         let
-          cfg = config.services.open-claw-voice;
+          cfg = config.services.openclaw-voice-assistant;
           # Get the package for the current system
           pkg = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
         in
         {
-          options.services.open-claw-voice = {
-            enable = mkEnableOption "OpenClaw Voice service";
+          options.services.openclaw-voice-assistant = {
+            enable = mkEnableOption "OpenClaw Voice Assistant service";
 
             package = mkOption {
               type = types.package;
               default = pkg;
-              defaultText = literalExpression "pkgs.open-claw-voice";
-              description = "The open-claw-voice package to use.";
+              defaultText = literalExpression "pkgs.openclaw-voice-assistant";
+              description = "The openclaw-voice-assistant package to use.";
             };
 
             user = mkOption {
@@ -184,7 +184,7 @@
               default = null;
               description = ''
                 Path to config.yaml file.
-                If null, will use ~/.config/open-claw-voice/config.yaml
+                If null, will use ~/.config/openclaw-voice-assistant/config.yaml
               '';
             };
 
@@ -201,10 +201,10 @@
                 If null, the application will look for .env in the XDG config directory.
 
                 For secret management with agenix:
-                  services.open-claw-voice.environmentFile = config.age.secrets.open-claw-voice.path;
+                  services.openclaw-voice-assistant.environmentFile = config.age.secrets.openclaw-voice-assistant.path;
 
                 For secret management with sops-nix:
-                  services.open-claw-voice.environmentFile = config.sops.secrets.open-claw-voice.path;
+                  services.openclaw-voice-assistant.environmentFile = config.sops.secrets.openclaw-voice-assistant.path;
               '';
             };
           };
@@ -215,7 +215,7 @@
 
             # Create systemd user service
             systemd.user.services.open-claw-voice = {
-              description = "OpenClaw Voice - Voice chat with OpenClaw";
+              description = "OpenClaw Voice Assistant - Voice chat with OpenClaw";
               wantedBy = [ "default.target" ];
               after = [
                 "pipewire.service"
@@ -231,13 +231,13 @@
                       [ "--no-log-file" ] ++ lib.optional (cfg.configFile != null) "--config ${cfg.configFile}"
                     );
                   in
-                  "${cfg.package}/bin/open-claw-voice ${args}";
+                  "${cfg.package}/bin/openclaw-voice-assistant ${args}";
 
                 Restart = "on-failure";
                 RestartSec = "5s";
 
                 # Allow SIGUSR1 for toggling active/dormant state
-                # Users can run: systemctl --user kill --kill-whom=main -s SIGUSR1 open-claw-voice
+                # Users can run: systemctl --user kill --kill-whom=main -s SIGUSR1 openclaw-voice-assistant
                 # Using KillMode=process so signals only go to main process by default
                 KillMode = "process";
                 KillSignal = "SIGTERM";

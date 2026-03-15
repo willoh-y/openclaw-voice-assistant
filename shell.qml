@@ -21,7 +21,7 @@ PanelWindow {
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
 
-    // State from open_claw_voice.py
+    // State from openclaw_voice_assistant.py
     property string state: "dormant"
 
     // Window is invisible when dormant
@@ -69,13 +69,13 @@ PanelWindow {
 
     // Read state file
     // In dev mode: ./state.txt (relative to script)
-    // In production: $XDG_RUNTIME_DIR/open-claw-voice/state.txt
+    // In production: $XDG_RUNTIME_DIR/openclaw-voice-assistant/state.txt
     property string stateFilePath: {
-        var envPath = Quickshell.env("OPEN_CLAW_VOICE_STATE_FILE")
+        var envPath = Quickshell.env("OPENCLAW_VOICE_ASSISTANT_STATE_FILE")
         if (envPath) return envPath
         
         var runtimeDir = Quickshell.env("XDG_RUNTIME_DIR")
-        if (runtimeDir) return runtimeDir + "/open-claw-voice/state.txt"
+        if (runtimeDir) return runtimeDir + "/openclaw-voice-assistant/state.txt"
         
         // Fallback to relative path for dev mode
         return Qt.resolvedUrl("./state.txt")

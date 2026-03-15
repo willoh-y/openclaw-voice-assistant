@@ -1,4 +1,4 @@
-"""Configuration loader for OpenClaw Voice."""
+"""Configuration loader for OpenClaw Voice Assistant."""
 
 import argparse
 from dataclasses import dataclass, field
@@ -129,7 +129,7 @@ class Config:
     def load(cls, path: Optional[Path] = None) -> "Config":
         """Load configuration from YAML file."""
         if path is None:
-            path = Path.home() / ".config" / "open-claw-voice" / "config.yaml"
+            path = Path.home() / ".config" / "openclaw-voice-assistant" / "config.yaml"
 
         if not path.exists():
             return cls()
@@ -142,19 +142,19 @@ class Config:
 
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="OpenClaw Voice - Voice chat with OpenClaw")
+    parser = argparse.ArgumentParser(description="OpenClaw Voice Assistant - Voice chat with OpenClaw")
     parser.add_argument(
         "--config",
         type=Path,
         default=None,
-        help="Path to config file (default: ~/.config/open-claw-voice/config.yaml)",
+        help="Path to config file (default: ~/.config/openclaw-voice-assistant/config.yaml)",
     )
     parser.add_argument(
         "--env-file",
         type=Path,
         default=None,
         dest="env_file",
-        help="Path to .env file with API keys (default: ~/.config/open-claw-voice/.env)",
+        help="Path to .env file with API keys (default: ~/.config/openclaw-voice-assistant/.env)",
     )
     parser.add_argument(
         "--no-log-file",
