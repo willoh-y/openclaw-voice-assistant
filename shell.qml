@@ -67,7 +67,7 @@ PanelWindow {
         },
         "dictating": {
             "char": "",
-            "color": "#f5d742",
+            "color": "#4271ae",
             "minOpacity": 0.7,
             "maxOpacity": 1.0,
             "pulseDuration": 600
