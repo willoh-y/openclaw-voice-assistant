@@ -65,6 +65,13 @@ PanelWindow {
             "maxOpacity": 1.0,
             "pulseDuration": 500
         },
+        "dictating": {
+            "char": "",
+            "color": "#f5d742",
+            "minOpacity": 0.7,
+            "maxOpacity": 1.0,
+            "pulseDuration": 600
+        },
         "error": {
             "char": "x",
             "color": "#ef5350",

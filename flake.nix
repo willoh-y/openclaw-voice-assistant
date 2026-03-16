@@ -25,6 +25,7 @@
           pipewire # pw-record, pw-play
           ffmpeg # ffplay (for Edge TTS)
           quickshell # UI overlay
+          wtype # Wayland text typing at cursor (for dictation mode)
         ];
 
         # Build the main application package

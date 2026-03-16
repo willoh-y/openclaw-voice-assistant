@@ -80,12 +80,21 @@ class InterruptConfig:
 
 
 @dataclass
+class DictationConfig:
+    """Configuration for dictation mode (SIGUSR2)."""
+    chunk_silence_ms: int = 700  # Short pause triggers transcription of current chunk
+    min_audio_rms: int = 400     # Minimum RMS energy to transcribe (filter quiet noise)
+    auto_spacing: bool = True    # Automatically add smart spacing between chunks
+
+
+@dataclass
 class Config:
     audio: AudioConfig = field(default_factory=AudioConfig)
     stt: STTConfig = field(default_factory=STTConfig)
     tts: TTSConfig = field(default_factory=TTSConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
     interrupt: InterruptConfig = field(default_factory=InterruptConfig)
+    dictation: DictationConfig = field(default_factory=DictationConfig)
 
     @classmethod
     def from_dict(cls, data: dict) -> "Config":
@@ -95,6 +104,7 @@ class Config:
         tts_data = data.get("tts", {})
         llm_data = data.get("llm", {})
         interrupt_data = data.get("interrupt", {})
+        dictation_data = data.get("dictation", {})
 
         # Handle nested STT config
         whisper_data = stt_data.get("whisper", {})
@@ -123,6 +133,7 @@ class Config:
             ),
             llm=LLMConfig(**llm_data),
             interrupt=InterruptConfig(**interrupt_data),
+            dictation=DictationConfig(**dictation_data),
         )
 
     @classmethod

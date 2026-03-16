@@ -42,3 +42,8 @@ llm:
 interrupt:
   delay_seconds: 0.5
   sustained_threshold_seconds: 0.3
+
+dictation:
+  chunk_silence_ms: 700  # Pause duration to trigger chunk transcription
+  min_audio_rms: 400     # Filter quiet background noise
+  auto_spacing: true     # Smart spacing between chunks (punctuation-aware)

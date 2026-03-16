@@ -24,12 +24,48 @@ from enum import Enum
 from pathlib import Path
 from typing import AsyncIterator, Optional
 
+import shutil
+import subprocess
+
 import aiohttp  # type: ignore
 import numpy as np  # type: ignore
 import websockets  # type: ignore
 from dotenv import load_dotenv  # type: ignore
 
 from config import Config, parse_args
+
+# Text typing function for dictation mode (initialized lazily)
+_text_typer = None
+
+
+def get_text_typer():
+    """
+    Get typing function for current display server.
+    Returns a callable that types text at cursor, or None if unavailable.
+    """
+    global _text_typer
+    if _text_typer is not None:
+        return _text_typer
+
+    wayland = os.environ.get("WAYLAND_DISPLAY")
+
+    if wayland and shutil.which("wtype"):
+        def type_text(text: str):
+            """Type text using wtype (Wayland)."""
+            subprocess.run(["wtype", "--", text], check=True)
+        _text_typer = type_text
+        return type_text
+
+    elif shutil.which("xdotool"):
+        def type_text(text: str):
+            """Type text using xdotool (X11)."""
+            subprocess.run(["xdotool", "type", "--clearmodifiers", "--", text], check=True)
+        _text_typer = type_text
+        return type_text
+
+    else:
+        return None
+
 
 # API keys - loaded after environment setup in main()
 STT_API_KEY: Optional[str] = None
@@ -165,6 +201,7 @@ class State(Enum):
     LISTENING = "listening"
     THINKING = "thinking"
     SPEAKING = "speaking"
+    DICTATING = "dictating"  # Dictation mode (STT -> cursor typing)
     ERROR = "error"
 
 
@@ -177,12 +214,13 @@ class OpenClawVoice:
         self.config = config
         self.state = State.DORMANT
         self.running = False
-        self.active = False  # Whether we're actively listening
+        self.active = False  # Conversation mode (SIGUSR1)
+        self.dictating = False  # Dictation mode (SIGUSR2)
         self.current_transcript = ""
         self.tts_task: Optional[asyncio.Task] = None
         self.interrupt_event = asyncio.Event()
         self.speech_detected_event = asyncio.Event()
-        self.toggle_event = asyncio.Event()  # Signaled by SIGUSR1
+        self.toggle_event = asyncio.Event()  # Signaled by SIGUSR1 or SIGUSR2
         self.quickshell_proc: Optional[asyncio.subprocess.Process] = None
         self._http_session: Optional[aiohttp.ClientSession] = None
 
@@ -205,7 +243,38 @@ class OpenClawVoice:
             self.interrupt_event.set()  # Stop any current activity
         else:
             logger.info("SIGUSR1: Activating (starting to listen)")
+            # Enforce mutual exclusivity with dictation mode
+            if self.dictating:
+                logger.info("Deactivating dictation mode (switching to conversation)")
+                self.dictating = False
+                self.interrupt_event.set()
             self.active = True
+        self.toggle_event.set()
+
+    def toggle_dictation(self):
+        """
+        Toggle dictation mode. Called by SIGUSR2 handler.
+        Mutually exclusive with conversation mode.
+        """
+        if self.dictating:
+            logger.info("SIGUSR2: Deactivating dictation mode")
+            self.dictating = False
+            self.interrupt_event.set()  # Stop current dictation loop
+        else:
+            logger.info("SIGUSR2: Activating dictation mode")
+            # Enforce mutual exclusivity: deactivate conversation mode if active
+            if self.active:
+                logger.info("Deactivating conversation mode (switching to dictation)")
+                self.active = False
+                self.interrupt_event.set()
+            # Provider warning (lenient - warn but allow)
+            if self.config.stt.provider != "whisper":
+                logger.warning(
+                    f"WARNING: Dictation mode works best with local Whisper. "
+                    f"Current provider: {self.config.stt.provider}. "
+                    f"Expect higher latency. Consider setting stt.provider: 'whisper'"
+                )
+            self.dictating = True
         self.toggle_event.set()
 
     def apply_noise_gate(self, audio_chunk: bytes) -> bytes:
@@ -317,6 +386,143 @@ class OpenClawVoice:
         if not inference_path.startswith("/"):
             inference_path = f"/{inference_path}"
         return f"{base}{inference_path}"
+
+    # --- Dictation mode helper methods ---
+
+    def _compute_rms(self, frames: list[bytes]) -> float:
+        """
+        Compute RMS (Root Mean Square) energy of audio frames.
+        Used to filter quiet background noise in dictation mode.
+        """
+        if not frames:
+            return 0.0
+        audio_data = b"".join(frames)
+        audio_array = np.frombuffer(audio_data, dtype=np.int16)
+        return float(np.sqrt(np.mean(audio_array.astype(np.float32) ** 2)))
+
+    def _is_hallucination(self, text: str) -> bool:
+        """
+        Filter common Whisper hallucinations on silence/noise.
+        Returns True if text should be discarded.
+        """
+        if not text:
+            return True
+
+        # Common hallucination patterns
+        hallucinations = {
+            "thank you", "thank you.", "thanks.", "thanks",
+            "you", "bye", "bye.", "goodbye", "goodbye.",
+            "the end", "the end.", "...", ".",
+            "[blank_audio]", ""
+        }
+
+        return text.lower().strip() in hallucinations
+
+    def _needs_spacing(self, last_text: str, new_text: str) -> bool:
+        """
+        Determine if spacing is needed between chunks (smart spacing).
+
+        Rules:
+        - No space if last_text is empty/nothing
+        - No space if new_text starts with punctuation
+        - Otherwise add a space
+        """
+        if not last_text:
+            return False
+
+        # Get first char of new text (stripped)
+        new_stripped = new_text.lstrip()
+        if not new_stripped:
+            return False
+
+        first_char = new_stripped[0]
+
+        # No space before punctuation
+        if first_char in ".,!?;:)]}":
+            return False
+
+        return True
+
+    async def _check_whisper_server(self) -> bool:
+        """
+        Check if Whisper server is reachable.
+        Returns True if server responds, False otherwise.
+        """
+        try:
+            base_url = self.config.stt.whisper.url
+            session = await self.get_http_session()
+
+            async with session.get(
+                base_url,
+                timeout=aiohttp.ClientTimeout(total=2.0)
+            ) as resp:
+                # Any response means server is up (even 404 is OK)
+                return True
+
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            logger.debug(f"Whisper server check failed: {e}")
+            return False
+
+    async def _transcribe_chunk_whisper(self, audio_frames: list[bytes]) -> str:
+        """
+        Quick transcription of audio chunk using local Whisper.
+        Returns empty string on error or blank audio.
+        """
+        try:
+            t0 = asyncio.get_event_loop().time()
+            wav_bytes = self._build_wav_bytes(audio_frames)
+            t1 = asyncio.get_event_loop().time()
+
+            url = self._whisper_inference_url()
+            whisper_cfg = self.config.stt.whisper
+
+            # Prepare form data
+            form = aiohttp.FormData()
+            form.add_field("file", wav_bytes, filename="chunk.wav", content_type="audio/wav")
+            form.add_field("response_format", whisper_cfg.response_format)
+            form.add_field("temperature", str(whisper_cfg.temperature))
+            form.add_field("temperature_inc", str(whisper_cfg.temperature_inc))
+            t2 = asyncio.get_event_loop().time()
+
+            # Send request
+            session = await self.get_http_session()
+            async with session.post(
+                url,
+                data=form,
+                timeout=aiohttp.ClientTimeout(total=whisper_cfg.request_timeout_seconds),
+            ) as resp:
+                t3 = asyncio.get_event_loop().time()
+                if resp.status != 200:
+                    error = await resp.text()
+                    logger.error(f"Whisper error {resp.status}: {error}")
+                    return ""
+
+                if whisper_cfg.response_format in {"json", "verbose_json"}:
+                    data = await resp.json()
+                    text = data.get("text", "")
+                else:
+                    text = await resp.text()
+                t4 = asyncio.get_event_loop().time()
+
+            logger.info(
+                f"Whisper timing: build_wav={(t1-t0)*1000:.0f}ms, "
+                f"prep_form={(t2-t1)*1000:.0f}ms, "
+                f"http_post={(t3-t2)*1000:.0f}ms, "
+                f"read_response={(t4-t3)*1000:.0f}ms, "
+                f"wav_size={len(wav_bytes)/1024:.1f}KB"
+            )
+
+            text = text.strip()
+
+            # Filter blank audio and hallucinations
+            if text in {"", "[BLANK_AUDIO]"} or self._is_hallucination(text):
+                return ""
+
+            return text
+
+        except Exception as e:
+            logger.error(f"Chunk transcription failed: {e}")
+            return ""
 
     async def run_stt(self) -> Optional[str]:
         """Run speech-to-text using the configured provider."""
@@ -888,6 +1094,169 @@ class OpenClawVoice:
             except asyncio.CancelledError:
                 pass
 
+    async def dictation_loop(self) -> None:
+        """
+        Dictation mode: continuously transcribe speech and type at cursor.
+
+        Flow:
+        1. Wait for speech (VAD)
+        2. Accumulate audio frames
+        3. On short pause (chunk_silence_ms), transcribe and type
+        4. Continue until deactivated via SIGUSR2
+
+        No auto-stop - only manual SIGUSR2 toggle stops dictation.
+        """
+        try:
+            await self.set_state(State.DICTATING)
+            logger.info("Dictation mode started (continuous until SIGUSR2)")
+
+            # Get typing function
+            type_text = get_text_typer()
+            if not type_text:
+                logger.error(
+                    "Cannot start dictation: no typing tool available. "
+                    "Install wtype (Wayland) or xdotool (X11)."
+                )
+                await self.set_state(State.ERROR)
+                return
+
+            # Validate Whisper server availability
+            if self.config.stt.provider == "whisper":
+                if not await self._check_whisper_server():
+                    logger.error(
+                        f"Cannot start dictation: Whisper server unreachable at "
+                        f"{self._whisper_inference_url()}. Please start whisper-server."
+                    )
+                    await self.set_state(State.ERROR)
+                    return
+
+            # Initialize VAD
+            frame_bytes = self._get_vad_frame_bytes()
+            if frame_bytes is None:
+                logger.error("Cannot initialize VAD for dictation")
+                await self.set_state(State.ERROR)
+                return
+
+            vad = self._create_vad()
+            cfg = self.config
+            frame_ms = cfg.stt.vad.frame_ms
+
+            # Calculate pause threshold
+            chunk_silence_frames = int(cfg.dictation.chunk_silence_ms / frame_ms)
+
+            # Start microphone
+            mic_proc = await self.stream_microphone()
+
+            # State tracking
+            audio_frames: list[bytes] = []
+            speech_started = False
+            silence_frames = 0
+            last_typed_text = ""  # Track for smart spacing
+
+            # Clear interrupt flag
+            self.interrupt_event.clear()
+
+            # Main dictation loop
+            async for frame in self._audio_frame_stream(mic_proc, frame_bytes):
+                # Check for deactivation
+                if not self.dictating or self.interrupt_event.is_set():
+                    logger.info("Dictation stopped (SIGUSR2 or interrupt)")
+                    break
+
+                # Apply noise gate
+                gated_frame = self.apply_noise_gate(frame)
+
+                # Run VAD
+                try:
+                    is_speech = vad.is_speech(gated_frame, cfg.audio.sample_rate)
+                except Exception as e:
+                    logger.error(f"VAD error: {e}")
+                    break
+
+                if speech_started:
+                    # Accumulate audio while speech is active
+                    audio_frames.append(gated_frame)
+
+                    if is_speech:
+                        # Speech detected, reset silence counter
+                        silence_frames = 0
+                    else:
+                        # Silence detected, increment counter
+                        silence_frames += 1
+
+                        # Check if we've hit the chunk silence threshold
+                        if silence_frames >= chunk_silence_frames and audio_frames:
+                            chunk_start_time = asyncio.get_event_loop().time()
+
+                            # Transcribe chunk if it has sufficient energy
+                            rms = self._compute_rms(audio_frames)
+                            audio_duration_ms = len(audio_frames) * frame_ms
+
+                            if rms >= cfg.dictation.min_audio_rms:
+                                # Transcribe the chunk
+                                transcribe_start = asyncio.get_event_loop().time()
+                                text = await self._transcribe_chunk_whisper(audio_frames)
+                                transcribe_time = (asyncio.get_event_loop().time() - transcribe_start) * 1000
+
+                                if text:
+                                    # Smart spacing
+                                    if cfg.dictation.auto_spacing and self._needs_spacing(last_typed_text, text):
+                                        text = " " + text
+
+                                    # Type at cursor (run in executor to avoid blocking)
+                                    type_start = asyncio.get_event_loop().time()
+                                    await asyncio.get_event_loop().run_in_executor(
+                                        None, type_text, text
+                                    )
+                                    type_time = (asyncio.get_event_loop().time() - type_start) * 1000
+
+                                    total_time = (asyncio.get_event_loop().time() - chunk_start_time) * 1000
+                                    logger.info(
+                                        f"Typed: {text!r} | "
+                                        f"audio={audio_duration_ms:.0f}ms, "
+                                        f"transcribe={transcribe_time:.0f}ms, "
+                                        f"type={type_time:.0f}ms, "
+                                        f"total={total_time:.0f}ms"
+                                    )
+                                    last_typed_text = text
+                                else:
+                                    logger.debug(
+                                        f"Empty transcription | "
+                                        f"audio={audio_duration_ms:.0f}ms, "
+                                        f"transcribe={transcribe_time:.0f}ms"
+                                    )
+                            else:
+                                logger.debug(
+                                    f"Skipped quiet chunk (RMS: {rms:.1f} < {cfg.dictation.min_audio_rms})"
+                                )
+
+                            # Reset for next chunk (but stay in speech mode)
+                            audio_frames = []
+                            silence_frames = 0
+
+                else:
+                    # Waiting for speech to start
+                    if is_speech:
+                        audio_frames.append(gated_frame)
+                        speech_started = True
+                        silence_frames = 0
+                        logger.debug("Speech started in dictation mode")
+
+            # Cleanup
+            mic_proc.terminate()
+            try:
+                await asyncio.wait_for(mic_proc.wait(), timeout=1.0)
+            except asyncio.TimeoutError:
+                mic_proc.kill()
+
+        except Exception as e:
+            logger.error(f"Dictation error: {e}", exc_info=True)
+            await self.set_state(State.ERROR)
+
+        finally:
+            await self.set_state(State.DORMANT)
+            logger.info("Dictation mode ended")
+
     async def run(self) -> None:
         """Main loop."""
         self.running = True
@@ -917,23 +1286,37 @@ class OpenClawVoice:
 
         try:
             while self.running:
-                # Wait in dormant state until activated
-                if not self.active:
+                # Wait in dormant state until activated (either mode)
+                if not self.active and not self.dictating:
                     await self.set_state(State.DORMANT)
                     self.toggle_event.clear()
-                    logger.info("Dormant - waiting for SIGUSR1 to activate")
+                    logger.info("Dormant - waiting for SIGUSR1 (conversation) or SIGUSR2 (dictation)")
                     await self.toggle_event.wait()
-                    if not self.active:
+                    if not self.active and not self.dictating:
                         continue
 
-                # Active mode - run conversation turns
+                # Dispatch to appropriate mode
                 self.interrupt_event.clear()
-                try:
-                    await self.conversation_turn()
-                except Exception as e:
-                    logger.error(f"Conversation error: {e}")
-                    await self.set_state(State.ERROR)
-                    await asyncio.sleep(2)
+
+                if self.dictating:
+                    # Dictation mode (SIGUSR2): STT -> cursor typing
+                    try:
+                        await self.dictation_loop()
+                    except Exception as e:
+                        logger.error(f"Dictation error: {e}")
+                        await self.set_state(State.ERROR)
+                        await asyncio.sleep(2)
+                    finally:
+                        self.dictating = False
+
+                elif self.active:
+                    # Conversation mode (SIGUSR1): STT -> LLM -> TTS
+                    try:
+                        await self.conversation_turn()
+                    except Exception as e:
+                        logger.error(f"Conversation error: {e}")
+                        await self.set_state(State.ERROR)
+                        await asyncio.sleep(2)
         except asyncio.CancelledError:
             logger.info("OpenClaw Voice Assistant shutting down...")
         finally:
@@ -985,8 +1368,11 @@ async def main():
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, voice.stop)
 
-    # Handle SIGUSR1 for toggling active/dormant state
+    # Handle SIGUSR1 for toggling conversation mode (active/dormant)
     loop.add_signal_handler(signal.SIGUSR1, voice.toggle_active)
+
+    # Handle SIGUSR2 for toggling dictation mode
+    loop.add_signal_handler(signal.SIGUSR2, voice.toggle_dictation)
 
     await voice.run()
 
