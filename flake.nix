@@ -221,8 +221,10 @@
               after = [
                 "pipewire.service"
                 "pipewire-pulse.service"
+                "graphical-session.target"
               ];
               requires = [ "pipewire.service" ];
+              wants = [ "graphical-session.target" ];
 
               serviceConfig = {
                 Type = "simple";
@@ -251,6 +253,9 @@
               environment = {
                 # Ensure XDG directories are available
                 XDG_RUNTIME_DIR = "/run/user/%U";
+                # Quickshell needs access to the Wayland compositor
+                WAYLAND_DISPLAY = "wayland-1";
+                DISPLAY = ":0";
               };
             };
           };

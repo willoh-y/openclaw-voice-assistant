@@ -1282,6 +1282,15 @@ class OpenClawVoice:
         )
         logger.info(f"Started Quickshell (PID: {self.quickshell_proc.pid})")
 
+        # Give Quickshell a moment to initialize; check it didn't crash immediately
+        await asyncio.sleep(0.5)
+        if self.quickshell_proc.returncode is not None:
+            logger.warning(
+                f"Quickshell exited immediately with code {self.quickshell_proc.returncode}. "
+                f"Overlay will not be displayed. "
+                f"Ensure WAYLAND_DISPLAY is set in the service environment."
+            )
+
         await self.set_state(State.DORMANT)
 
         try:
