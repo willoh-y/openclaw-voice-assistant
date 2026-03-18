@@ -267,13 +267,6 @@ class OpenClawVoice:
                 logger.info("Deactivating conversation mode (switching to dictation)")
                 self.active = False
                 self.interrupt_event.set()
-            # Provider warning (lenient - warn but allow)
-            if self.config.stt.provider != "whisper":
-                logger.warning(
-                    f"WARNING: Dictation mode works best with local Whisper. "
-                    f"Current provider: {self.config.stt.provider}. "
-                    f"Expect higher latency. Consider setting stt.provider: 'whisper'"
-                )
             self.dictating = True
         self.toggle_event.set()
 
@@ -1094,68 +1087,171 @@ class OpenClawVoice:
             except asyncio.CancelledError:
                 pass
 
-    async def dictation_loop(self) -> None:
+    async def _dictation_loop_deepgram(self, type_text) -> None:
         """
-        Dictation mode: continuously transcribe speech and type at cursor.
+        Deepgram streaming dictation: stream audio via WebSocket,
+        type each finalized transcript segment at the cursor in real-time.
 
-        Flow:
-        1. Wait for speech (VAD)
-        2. Accumulate audio frames
-        3. On short pause (chunk_silence_ms), transcribe and type
-        4. Continue until deactivated via SIGUSR2
-
-        No auto-stop - only manual SIGUSR2 toggle stops dictation.
+        Uses Deepgram's server-side VAD — no local VAD needed.
         """
+        if not STT_API_KEY:
+            logger.error("STT_API_KEY is required for Deepgram dictation")
+            await self.set_state(State.ERROR)
+            return
+
+        cfg = self.config
+        url = (
+            f"wss://api.deepgram.com/v1/listen"
+            f"?encoding=linear16"
+            f"&sample_rate={cfg.audio.sample_rate}"
+            f"&channels={cfg.audio.channels}"
+            f"&model={cfg.stt.model}"
+            f"&language={cfg.stt.language}"
+            f"&endpointing={cfg.stt.endpointing_ms}"
+            f"&interim_results=false"
+            f"&utterance_end_ms={cfg.stt.endpointing_ms}"
+            f"&vad_events=true"
+        )
+
+        mic_proc = await self.stream_microphone()
+        last_typed_text = ""
+
         try:
-            await self.set_state(State.DICTATING)
-            logger.info("Dictation mode started (continuous until SIGUSR2)")
+            async with websockets.connect(
+                url,
+                additional_headers={"Authorization": f"Token {STT_API_KEY}"},
+            ) as ws:
 
-            # Get typing function
-            type_text = get_text_typer()
-            if not type_text:
-                logger.error(
-                    "Cannot start dictation: no typing tool available. "
-                    "Install wtype (Wayland) or xdotool (X11)."
+                async def send_audio():
+                    """Stream mic audio to Deepgram with noise gating."""
+                    try:
+                        while self.running and self.dictating and not self.interrupt_event.is_set():
+                            if mic_proc.stdout is None:
+                                break
+                            chunk = await mic_proc.stdout.read(4096)
+                            if not chunk:
+                                break
+                            gated_chunk = self.apply_noise_gate(chunk)
+                            await ws.send(gated_chunk)
+                    except Exception as e:
+                        logger.debug(f"Dictation audio send stopped: {e}")
+                    finally:
+                        try:
+                            await ws.send(json.dumps({"type": "CloseStream"}))
+                        except (asyncio.CancelledError, websockets.exceptions.ConnectionClosed, Exception):
+                            pass
+
+                async def receive_and_type():
+                    """Receive Deepgram transcripts and type them at the cursor."""
+                    nonlocal last_typed_text
+
+                    try:
+                        while self.dictating and not self.interrupt_event.is_set():
+                            try:
+                                msg = await asyncio.wait_for(ws.recv(), timeout=0.5)
+                            except asyncio.TimeoutError:
+                                continue
+
+                            data = json.loads(msg)
+                            msg_type = data.get("type")
+
+                            if msg_type == "Results":
+                                channel = data.get("channel", {})
+                                alternatives = channel.get("alternatives", [])
+                                is_final = data.get("is_final", False)
+
+                                if not alternatives or not is_final:
+                                    continue
+
+                                transcript = alternatives[0].get("transcript", "").strip()
+                                if not transcript:
+                                    continue
+
+                                # Smart spacing
+                                text = transcript
+                                if cfg.dictation.auto_spacing and self._needs_spacing(last_typed_text, text):
+                                    text = " " + text
+
+                                # Type at cursor
+                                type_start = asyncio.get_event_loop().time()
+                                await asyncio.get_event_loop().run_in_executor(
+                                    None, type_text, text
+                                )
+                                type_time = (asyncio.get_event_loop().time() - type_start) * 1000
+
+                                logger.info(f"Typed: {text!r} | type={type_time:.0f}ms")
+                                last_typed_text = text
+
+                    except websockets.exceptions.ConnectionClosed:
+                        logger.debug("Deepgram dictation WebSocket closed")
+                    except Exception as e:
+                        logger.error(f"Dictation receive error: {e}")
+
+                # Run send and receive concurrently
+                send_task = asyncio.create_task(send_audio())
+                receive_task = asyncio.create_task(receive_and_type())
+
+                # Wait for either task to end (deactivation, interrupt, or connection close)
+                done, pending = await asyncio.wait(
+                    [send_task, receive_task],
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
-                await self.set_state(State.ERROR)
-                return
 
-            # Validate Whisper server availability
-            if self.config.stt.provider == "whisper":
-                if not await self._check_whisper_server():
-                    logger.error(
-                        f"Cannot start dictation: Whisper server unreachable at "
-                        f"{self._whisper_inference_url()}. Please start whisper-server."
-                    )
-                    await self.set_state(State.ERROR)
-                    return
+                # Cancel remaining tasks
+                for task in pending:
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
 
-            # Initialize VAD
-            frame_bytes = self._get_vad_frame_bytes()
-            if frame_bytes is None:
-                logger.error("Cannot initialize VAD for dictation")
-                await self.set_state(State.ERROR)
-                return
+        except Exception as e:
+            logger.error(f"Deepgram dictation error: {e}", exc_info=True)
+        finally:
+            mic_proc.terminate()
+            try:
+                await asyncio.wait_for(mic_proc.wait(), timeout=1.0)
+            except asyncio.TimeoutError:
+                mic_proc.kill()
 
-            vad = self._create_vad()
-            cfg = self.config
-            frame_ms = cfg.stt.vad.frame_ms
+    async def _dictation_loop_whisper(self, type_text) -> None:
+        """
+        Whisper batch dictation: use local VAD to detect speech chunks,
+        transcribe each chunk via Whisper server, type the result.
+        """
+        # Validate Whisper server availability
+        if not await self._check_whisper_server():
+            logger.error(
+                f"Cannot start dictation: Whisper server unreachable at "
+                f"{self._whisper_inference_url()}. Please start whisper-server."
+            )
+            await self.set_state(State.ERROR)
+            return
 
-            # Calculate pause threshold
-            chunk_silence_frames = int(cfg.dictation.chunk_silence_ms / frame_ms)
+        # Initialize VAD
+        frame_bytes = self._get_vad_frame_bytes()
+        if frame_bytes is None:
+            logger.error("Cannot initialize VAD for dictation")
+            await self.set_state(State.ERROR)
+            return
 
-            # Start microphone
-            mic_proc = await self.stream_microphone()
+        vad = self._create_vad()
+        cfg = self.config
+        frame_ms = cfg.stt.vad.frame_ms
 
-            # State tracking
-            audio_frames: list[bytes] = []
-            speech_started = False
-            silence_frames = 0
-            last_typed_text = ""  # Track for smart spacing
+        # Calculate pause threshold
+        chunk_silence_frames = int(cfg.dictation.chunk_silence_ms / frame_ms)
 
-            # Clear interrupt flag
-            self.interrupt_event.clear()
+        # Start microphone
+        mic_proc = await self.stream_microphone()
 
+        # State tracking
+        audio_frames: list[bytes] = []
+        speech_started = False
+        silence_frames = 0
+        last_typed_text = ""  # Track for smart spacing
+
+        try:
             # Main dictation loop
             async for frame in self._audio_frame_stream(mic_proc, frame_bytes):
                 # Check for deactivation
@@ -1242,12 +1338,48 @@ class OpenClawVoice:
                         silence_frames = 0
                         logger.debug("Speech started in dictation mode")
 
+        finally:
             # Cleanup
             mic_proc.terminate()
             try:
                 await asyncio.wait_for(mic_proc.wait(), timeout=1.0)
             except asyncio.TimeoutError:
                 mic_proc.kill()
+
+    async def dictation_loop(self) -> None:
+        """
+        Dictation mode: continuously transcribe speech and type at cursor.
+        Dispatches to the appropriate provider (Deepgram streaming or Whisper batch).
+
+        No auto-stop - only manual SIGUSR2 toggle stops dictation.
+        """
+        try:
+            await self.set_state(State.DICTATING)
+            logger.info("Dictation mode started (continuous until SIGUSR2)")
+
+            # Get typing function
+            type_text = get_text_typer()
+            if not type_text:
+                logger.error(
+                    "Cannot start dictation: no typing tool available. "
+                    "Install wtype (Wayland) or xdotool (X11)."
+                )
+                await self.set_state(State.ERROR)
+                return
+
+            # Clear interrupt flag
+            self.interrupt_event.clear()
+
+            # Dispatch to provider-specific dictation loop
+            provider = self.config.stt.provider
+            if provider == "deepgram":
+                await self._dictation_loop_deepgram(type_text)
+            elif provider == "whisper":
+                await self._dictation_loop_whisper(type_text)
+            else:
+                logger.error(f"Unknown STT provider for dictation: {provider}")
+                await self.set_state(State.ERROR)
+                return
 
         except Exception as e:
             logger.error(f"Dictation error: {e}", exc_info=True)
